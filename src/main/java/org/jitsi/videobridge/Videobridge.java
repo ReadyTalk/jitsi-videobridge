@@ -116,7 +116,7 @@ public class Videobridge
      * {@link Conference} and {@link Channel} IDs in order to minimize busy
      * waiting for the value of {@link System#currentTimeMillis()} to change.
      */
-    static final Random RANDOM = new Random();
+    public static final Random RANDOM = new Random();
 
     /**
      * The REST-like HTTP/JSON API of Jitsi Videobridge.
@@ -131,26 +131,20 @@ public class Videobridge
         = "org.jitsi.videobridge." + REST_API;
 
     /**
-     * The name of the property which specifies the FQN name of the RTCP
-     * strategy to use when there are less than 3 participants.
-     */
-    static final String RTCP_TERMINATION_FALLBACK_STRATEGY_PNAME
-            = "org.jitsi.videobridge.rtcp.fallbackStrategy";
-
-    /**
-     * The name of the property which specifies the FQN name of the RTCP
-     * strategy to use by default.
-     */
-    static final String RTCP_TERMINATION_STRATEGY_PNAME
-            = "org.jitsi.videobridge.rtcp.strategy";
-
-    /**
      * The property that specifies allowed entities for turning on graceful
      * shutdown mode. For XMPP API this is "from" JID. In case of REST
      * the source IP is being copied into the "from" field of the IQ.
      */
     static final String SHUTDOWN_ALLOWED_SOURCE_REGEXP_PNAME
         = "org.jitsi.videobridge.shutdown.ALLOWED_SOURCE_REGEXP";
+
+    /**
+     * The property that specifies entities authorized to operate the bridge.
+     * For XMPP API this is "from" JID. In case of REST the source IP is being
+     * copied into the "from" field of the IQ.
+     */
+    static final String AUTHORIZED_SOURCE_REGEXP_PNAME
+        = "org.jitsi.videobridge.AUTHORIZED_SOURCE_REGEXP";
 
     /**
      * The XMPP API of Jitsi Videobridge.
@@ -169,6 +163,12 @@ public class Videobridge
     {
         return ServiceUtils2.getServices(bundleContext, Videobridge.class);
     }
+
+    /**
+     * The pattern used to filter entities that are allowed to operate
+     * the videobridge.
+     */
+    private Pattern authorizedSourcePattern;
 
     /**
      * The (OSGi) <tt>BundleContext</tt> in which this <tt>Videobridge</tt> has
@@ -589,6 +589,14 @@ public class Videobridge
                 conferenceIQ,
                 new XMPPError(XMPPError.Condition.not_authorized));
         }
+        else if (authorizedSourcePattern != null &&
+                 (focus == null ||
+                  !authorizedSourcePattern.matcher(focus).matches()))
+        {
+            return IQ.createErrorResponse(
+                conferenceIQ,
+                new XMPPError(XMPPError.Condition.not_authorized));
+        }
         else
         {
             /*
@@ -611,7 +619,9 @@ public class Videobridge
                 }
             }
             else
+            {
                 conference = getConference(id, focus);
+            }
 
             if (conference != null)
                 conference.setLastKnownFocus(conferenceIQ.getFrom());
@@ -631,6 +641,10 @@ public class Videobridge
         }
         else
         {
+            String name = conferenceIQ.getName();
+            if (name != null)
+                conference.setName(name);
+
             responseConferenceIQ = new ColibriConferenceIQ();
             conference.describeShallow(responseConferenceIQ);
 
@@ -670,26 +684,7 @@ public class Videobridge
                 }
             }
 
-            // Get the RTCP termination strategy.
-            ColibriConferenceIQ.RTCPTerminationStrategy strategyIQ
-                = conferenceIQ.getRTCPTerminationStrategy();
-            String strategyFQN;
-
-            if (strategyIQ == null)
-            {
-                strategyFQN = null;
-            }
-            else
-            {
-                strategyFQN = strategyIQ.getName();
-                if (strategyFQN != null)
-                {
-                    strategyFQN = strategyFQN.trim();
-                    if (strategyFQN.length() == 0)
-                        strategyFQN = null;
-                }
-            }
-
+            // TODO(gp) Remove ColibriConferenceIQ.RTCPTerminationStrategy
             for (ColibriConferenceIQ.Content contentIQ
                     : conferenceIQ.getContents())
             {
@@ -707,10 +702,6 @@ public class Videobridge
                 }
                 else
                 {
-                    // Set the RTCP termination strategy.
-                    if (strategyFQN != null)
-                        content.setRTCPTerminationStrategyFQN(strategyFQN);
-
                     ColibriConferenceIQ.Content responseContentIQ
                         = new ColibriConferenceIQ.Content(content.getName());
 
@@ -1108,6 +1099,19 @@ public class Videobridge
     }
 
     /**
+     * Returns <tt>true</tt> if XMPP API has been enabled or <tt>false</tt>
+     * otherwise.
+     */
+    public boolean isXmppApiEnabled()
+    {
+        ConfigurationService config
+            = ServiceUtils.getService(
+                getBundleContext(), ConfigurationService.class);
+
+        return config.getBoolean(Videobridge.XMPP_API_PNAME, false);
+    }
+
+    /**
      * Triggers the shutdown given that we're in graceful shutdown mode and
      * there are no conferences currently in progress.
      */
@@ -1128,6 +1132,38 @@ public class Videobridge
                 logger.info("Videobridge is shutting down NOW");
 
                 shutdownService.beginShutdown();
+            }
+        }
+    }
+
+    /**
+     * Configures regular expression used to filter users authorized to manage
+     * conferences and trigger graceful shutdown(if separate pattern has not
+     * been configured).
+     * @param authorizedSourceRegExp regular expression string
+     */
+    public void setAuthorizedSourceRegExp(String authorizedSourceRegExp)
+    {
+        if (!StringUtils.isNullOrEmpty(authorizedSourceRegExp))
+        {
+            authorizedSourcePattern
+                = Pattern.compile(authorizedSourceRegExp);
+
+            // If no shutdown regexp then authorized sources are also
+            // allowed trigger graceful shutdown
+            if (shutdownSourcePattern == null)
+                shutdownSourcePattern = authorizedSourcePattern;
+        }
+        else
+        // Turn off
+        {
+            if (shutdownSourcePattern == authorizedSourcePattern)
+            {
+                shutdownSourcePattern = authorizedSourcePattern = null;
+            }
+            else
+            {
+                authorizedSourcePattern = null;
             }
         }
     }
@@ -1173,6 +1209,26 @@ public class Videobridge
             {
                 logger.error(
                    "Error parsing enableGracefulShutdownMode sources reg expr: "
+                        + shutdownSourcesRegexp, exc);
+            }
+        }
+
+        String authorizedSourceRegexp
+            = (cfg == null)
+                    ? null : cfg.getString(AUTHORIZED_SOURCE_REGEXP_PNAME);
+        if (!StringUtils.isNullOrEmpty(authorizedSourceRegexp))
+        {
+            try
+            {
+                logger.info(
+                    "Authorized source regexp: " + authorizedSourceRegexp);
+
+                setAuthorizedSourceRegExp(authorizedSourceRegexp);
+            }
+            catch (PatternSyntaxException exc)
+            {
+                logger.error(
+                    "Error parsing authorized sources reg expr: "
                         + shutdownSourcesRegexp, exc);
             }
         }

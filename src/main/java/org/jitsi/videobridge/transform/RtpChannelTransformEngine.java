@@ -17,9 +17,9 @@ package org.jitsi.videobridge.transform;
 
 import org.jitsi.impl.neomedia.transform.*;
 import org.jitsi.service.configuration.*;
-import org.jitsi.service.neomedia.*;
 import org.jitsi.util.*;
 import org.jitsi.videobridge.*;
+import org.jitsi.videobridge.rewriting.*;
 import org.jitsi.videobridge.rtcp.*;
 
 import java.util.*;
@@ -28,6 +28,7 @@ import java.util.*;
  * Implements a <tt>TransformEngine</tt> for a specific <tt>RtpChannel</tt>.
  *
  * @author Boris Grozev
+ * @author George Politis
  */
 public class RtpChannelTransformEngine
     extends TransformEngineChain
@@ -75,15 +76,16 @@ public class RtpChannelTransformEngine
     private CachingTransformer cache;
 
     /**
-     * The transformer which parses incoming RTCP packets.
-     */
-    private RTCPTransformEngine rtcpTransformEngine;
-
-    /**
      * The transformer which intercepts NACK packets and passes them on to the
      * channel logic.
      */
     private NACKNotifier nackNotifier;
+
+    /**
+     * The transformer which intercepts REMB packets and passes them on to the
+     * channel logic.
+     */
+    private REMBNotifier rembNotifier;
 
     /**
      * The transformer which replaces the timestamp in an abs-send-time RTP
@@ -96,6 +98,11 @@ public class RtpChannelTransformEngine
      * <tt>RtpChannel</tt>.
      */
     private RetransmissionRequester retransmissionRequester;
+
+    /**
+     * The transformer which handles SSRC rewriting.
+     */
+    private SsrcRewritingEngine ssrcRewritingEngine;
 
     /**
      * Initializes a new <tt>RtpChannelTransformEngine</tt> for a specific
@@ -155,18 +162,17 @@ public class RtpChannelTransformEngine
             cache = new CachingTransformer();
             transformerList.add(cache);
 
-            // Note: we use a separate RTCPTransformer here, instead of using
-            // the RTCPTerminationStrategy, because interpreting RTCP NACK
-            // packets should happen in the context of a specific channel, and
-            // the RTCPTermination strategy is a single instance for a
-            // conference. The current intention/idea is to eventually move
-            // the RTCP parsing code from the RTCPTerminationStrategy here, so
-            // that we only parse RTCP once, and so that the REMB/RR code
-            // doesn't have to find the source Channel by SSRC.
             nackNotifier = new NACKNotifier((NACKHandler) channel);
-            rtcpTransformEngine
-                    = new RTCPTransformEngine(new Transformer[] {nackNotifier});
-            transformerList.add(rtcpTransformEngine);
+            transformerList.add(nackNotifier);
+        }
+
+        if (channel instanceof VideoChannel)
+        {
+            VideoChannel videoChannel = (VideoChannel) channel;
+            rembNotifier = new REMBNotifier(videoChannel);
+            transformerList.add(rembNotifier);
+            ssrcRewritingEngine = new SsrcRewritingEngine(videoChannel);
+            transformerList.add(ssrcRewritingEngine);
         }
 
         return
@@ -204,6 +210,17 @@ public class RtpChannelTransformEngine
     }
 
     /**
+     * Enables SSRC re-writing.
+     *
+     * @param enabled whether to enable or disable.
+     */
+    public void enableSsrcRewriting(boolean enabled)
+    {
+        if (ssrcRewritingEngine != null)
+            ssrcRewritingEngine.setEnabled(enabled);
+    }
+
+    /**
      * Checks whether retransmission requests are enabled for the
      * <tt>RtpChannel</tt>.
      * @return <tt>true</tt> if retransmission requests are enabled for the
@@ -212,5 +229,17 @@ public class RtpChannelTransformEngine
     public boolean retransmissionsRequestsEnabled()
     {
         return retransmissionRequester != null;
+    }
+
+    /**
+     * Gets a boolean value indicating whether SSRC re-writing is enabled or
+     * not.
+     *
+     * @return a boolean value indicating whether SSRC re-writing is enabled or
+     * not.
+     */
+    public boolean isSsrcRewritingEnabled()
+    {
+        return ssrcRewritingEngine.isEnabled();
     }
 }

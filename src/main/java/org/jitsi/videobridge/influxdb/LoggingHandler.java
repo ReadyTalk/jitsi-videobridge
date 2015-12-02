@@ -86,27 +86,27 @@ public class LoggingHandler
             "conference_id",
             "endpoint_id",
 
-            "stats.local_ip",
-            "stats.local_port",
-            "stats.remote_ip",
-            "stats.remote_port",
+            "stats_local_ip",
+            "stats_local_port",
+            "stats_remote_ip",
+            "stats_remote_port",
 
-            "stats.nb_received_bytes",
-            "stats.nb_sent_bytes",
+            "stats_nb_received_bytes",
+            "stats_nb_sent_bytes",
 
-            "stats.nb_received_packets",
-            "stats.nb_received_packets_lost",
+            "stats_nb_received_packets",
+            "stats_nb_received_packets_lost",
 
-            "stats.nb_sent_packets",
-            "stats.nb_sent_packets_lost",
+            "stats_nb_sent_packets",
+            "stats_nb_sent_packets_lost",
 
-            "stats.min_download_jitter_ms",
-            "stats.max_download_jitter_ms",
-            "stats.avg_download_jitter_ms",
+            "stats_min_download_jitter_ms",
+            "stats_max_download_jitter_ms",
+            "stats_avg_download_jitter_ms",
 
-            "stats.min_upload_jitter_ms",
-            "stats.max_upload_jitter_ms",
-            "stats.avg_upload_jitter_ms"
+            "stats_min_upload_jitter_ms",
+            "stats_max_upload_jitter_ms",
+            "stats_avg_upload_jitter_ms"
         };
 
     /**
@@ -250,6 +250,9 @@ public class LoggingHandler
         = ExecutorUtils
             .newCachedThreadPool(true, LoggingHandler.class.getName());
 
+    /** Javadoc me! */
+    private final String databaseName;
+
     /**
      * The <tt>URL</tt> to be used to POST to <tt>InfluxDB</tt>. Besides the
      * protocol, host and port also encodes the database name, user name and
@@ -275,8 +278,8 @@ public class LoggingHandler
         if (urlBase == null)
             throw new Exception(s + URL_BASE_PNAME);
 
-        String database = cfg.getString(DATABASE_PNAME, null);
-        if (database == null)
+        this.databaseName = cfg.getString(DATABASE_PNAME, null);
+        if (databaseName == null)
             throw new Exception(s + DATABASE_PNAME);
 
         String user = cfg.getString(USER_PNAME, null);
@@ -288,12 +291,12 @@ public class LoggingHandler
             throw new Exception(s + PASS_PNAME);
 
         String urlStr
-            = urlBase +  "/db/" + database + "/series?u=" + user +"&p=" +pass;
+            = urlBase +  "/write?db=" + databaseName + "&u=" + user +"&p=" +pass;
 
         url = new URL(urlStr);
 
         logger.info("Initialized InfluxDBLoggingService for " + urlBase
-            + ", database \"" + database + "\"");
+            + ", database \"" + databaseName + "\"");
     }
 
     /**
@@ -306,29 +309,30 @@ public class LoggingHandler
     @SuppressWarnings("unchecked")
     protected void logEvent(InfluxDBEvent e)
     {
-        // The following is a sample JSON message in the format used by InfluxDB
-        //  [
-        //    {
-        //     "name": "series_name",
-        //     "columns": ["column1", "column2"],
-        //     "points": [
-        //           ["value1", 1234],
-        //           ["value2", 5678]
-        //          ]
-        //    }
-        //  ]
+        /* The following is a sample JSON message in the format used by InfluxDB v0.9.0
+            {
+                "database": "mydb",
+                "retentionPolicy": "default",
+                "points": [
+                    {
+                        "measurement": "cpu_load_short",
+                        "tags": {
+                            "host": "server01",
+                            "region": "us-west"
+                        },
+                        "timestamp": "2009-11-10T23:00:00Z",
+                        "fields": {
+                            "value": 0.64
+                        }
+                    }
+                ]
+            }
+        */
 
-        boolean useLocalTime = e.useLocalTime();
-        long now = System.currentTimeMillis();
         boolean multipoint = false;
         int pointCount = 1;
-        JSONArray columns = new JSONArray();
-        JSONArray points = new JSONArray();
-        Object[] values = e.getValues();
-
-        if (useLocalTime)
-            columns.add("time");
-        Collections.addAll(columns, e.getColumns());
+        final String[] columns = e.getColumns();
+        final Object[] values = e.getValues();
 
         if (values[0] instanceof Object[])
         {
@@ -336,41 +340,29 @@ public class LoggingHandler
             pointCount = values.length;
         }
 
+        final JSONArray pointsArray = new JSONArray();
         if (multipoint)
         {
-            for (int i = 0; i < pointCount; i++)
-            {
+            for (int i = 0; i < pointCount; i++) {
                 if (!(values[i] instanceof Object[]))
                     continue;
 
-                JSONArray point = new JSONArray();
-                if (useLocalTime)
-                    point.add(now);
-                Collections.addAll(point, (Object[]) values[i]);
-                points.add(point);
+                pointsArray.add(createPoint(e, columns, (Object[])values[i]));
             }
         }
-        else
-        {
-            JSONArray point = new JSONArray();
-            if (useLocalTime)
-                point.add(now);
-            Collections.addAll(point, values);
-            points.add(point);
+        else {
+            pointsArray.add(createPoint(e, columns, values));
         }
 
-        JSONObject jsonObject = new JSONObject();
-        jsonObject.put("name", e.getName());
-        jsonObject.put("columns", columns);
-        jsonObject.put("points", points);
-
-        JSONArray jsonArray = new JSONArray();
-        jsonArray.add(jsonObject);
+        final JSONObject queryData = new JSONObject();
+        queryData.put("database", databaseName);
+        queryData.put("retentionPolicy", "default");
+        queryData.put("points", pointsArray);
 
         // TODO: this is probably a good place to optimize by grouping multiple
         // events in a single POST message and/or multiple points for events
         // of the same type together).
-        final String jsonString = jsonArray.toJSONString();
+        final String jsonString = queryData.toJSONString();
         executor.execute(new Runnable()
         {
             @Override
@@ -379,6 +371,37 @@ public class LoggingHandler
                 sendPost(jsonString);
             }
         });
+    }
+
+    private JSONObject createPoint(InfluxDBEvent e, String[] columns, Object[] values) {
+        final JSONObject fieldsObject = new JSONObject();
+        long pointTime = -1;
+        for (int i = 0; i < columns.length; ++i) {
+            if(columns[i] != null && columns[i].equals("time")) {
+                pointTime = Long.parseLong(values[i].toString());
+            }
+
+            if (values[i] instanceof Object[]) {
+                logger.warn("value for column \"" + columns[i] + "\" is an unsupported multipoint array, skipping column");
+                continue;
+            } else {
+                fieldsObject.put(columns[i], values[i]);
+            }
+        }
+
+        final JSONObject pointObject = new JSONObject();
+        pointObject.put("measurement", e.getName());
+        if (e.useLocalTime()) { // TODO: We may require a different timestamp format, possibly from a different clock.
+            pointObject.put("timestamp", System.currentTimeMillis());
+            pointObject.put("precision", "ms"); // specify millisecond precision
+        } else if(values[i] == null) {
+            fieldsObject.put(columns[i], "null"); //This is to prevent crashing influxdb with null values
+        } else if(pointTime > 0) {
+            pointObject.put("timestamp", pointTime);
+        }
+        pointObject.put("fields", fieldsObject);
+
+        return pointObject;
     }
 
     /**
@@ -405,7 +428,7 @@ public class LoggingHandler
             outputStream.close();
 
             int responseCode = connection.getResponseCode();
-            if (responseCode != 200)
+            if (responseCode != 204)
                 throw new IOException("HTTP response code: "
                     + responseCode);
         }

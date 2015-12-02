@@ -99,6 +99,11 @@ public class Conference
     private final String id;
 
     /**
+     * The world readable name of this instance if any.
+     */
+    private String name;
+
+    /**
      * The time in milliseconds of the last activity related to this
      * <tt>Conference</tt>. In the time interval between the last activity and
      * now, this <tt>Conference</tt> is considered inactive.
@@ -435,6 +440,7 @@ public class Conference
     public void describeShallow(ColibriConferenceIQ iq)
     {
         iq.setID(getID());
+        iq.setName(getName());
     }
 
 
@@ -1046,7 +1052,8 @@ public class Conference
         if (this.recordingDirectory == null) {
             SimpleDateFormat dateFormat
                     = new SimpleDateFormat("yyyy-MM-dd.HH-mm-ss.");
-            this.recordingDirectory = dateFormat.format(new Date()) + getID();
+            this.recordingDirectory = dateFormat.format(new Date()) + getID()
+                + ((name != null) ? "_" + name : "");
         }
 
         return this.recordingDirectory;
@@ -1525,6 +1532,9 @@ public class Conference
                 endpoints = speechActivity.getEndpoints();
                 for (Channel channel : content.getChannels())
                 {
+                    if (!(channel instanceof RtpChannel))
+                        continue;
+
                     RtpChannel rtpChannel = (RtpChannel) channel;
                     List<Endpoint> channelEndpointsToAskForKeyframes
                         = rtpChannel.speechActivityEndpointsChanged(endpoints);
@@ -1635,5 +1645,22 @@ public class Conference
                 }
             }
         }
+    }
+
+    /**
+     * Sets the conference name.
+     * @param name the new name.
+     */
+    public void setName(String name)
+    {
+        this.name = name;
+    }
+
+    /**
+     * Gets the conference name.
+     */
+    public String getName()
+    {
+        return name;
     }
 }

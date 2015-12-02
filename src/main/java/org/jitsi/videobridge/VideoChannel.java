@@ -30,10 +30,13 @@ import net.java.sip.communicator.impl.protocol.jabber.extensions.jingle.*;
 
 import org.jitsi.impl.neomedia.*;
 import org.jitsi.impl.neomedia.rtcp.*;
+import org.jitsi.impl.neomedia.rtcp.termination.strategies.*;
 import org.jitsi.impl.neomedia.rtp.remotebitrateestimator.*;
 import org.jitsi.impl.neomedia.transform.*;
+import org.jitsi.service.configuration.*;
+import org.jitsi.service.neomedia.*;
 import org.jitsi.service.neomedia.codec.*;
-import org.jitsi.util.Logger;
+import org.jitsi.util.*;
 import org.jitsi.videobridge.ratecontrol.*;
 import org.jitsi.videobridge.rtcp.*;
 import org.jitsi.videobridge.simulcast.*;
@@ -58,6 +61,13 @@ public class VideoChannel
     private static final int INCOMING_BITRATE_INTERVAL_MS = 5000;
 
     /**
+     * The name of the property which specifies the FQN name of the RTCP
+     * strategy to use by default.
+     */
+    public static final String RTCP_TERMINATION_STRATEGY_PNAME
+        = "org.jitsi.videobridge.rtcp.strategy";
+
+    /**
      * The <tt>Logger</tt> used by the <tt>VideoChannel</tt> class and its
      * instances to print debug information.
      */
@@ -77,18 +87,21 @@ public class VideoChannel
 
         for (Channel channel : channels)
         {
-            try
+            if (channel instanceof VideoChannel)
             {
-                ((VideoChannel) channel).updateInLastN(channels);
-            }
-            catch (Throwable t)
-            {
-                if (t instanceof InterruptedException)
-                    Thread.currentThread().interrupt();
-                else if (t instanceof ThreadDeath)
-                    throw (ThreadDeath) t;
-                else
-                    logger.error(t);
+                try
+                {
+                    ((VideoChannel) channel).updateInLastN(channels);
+                }
+                catch (Throwable t)
+                {
+                    if (t instanceof InterruptedException)
+                        Thread.currentThread().interrupt();
+                    else if (t instanceof ThreadDeath)
+                        throw (ThreadDeath) t;
+                    else
+                        logger.error(t);
+                }
             }
         }
     }
@@ -178,6 +191,66 @@ public class VideoChannel
 
         simulcastManager = new SimulcastManager(this);
         setTransformEngine(new RtpChannelTransformEngine(this));
+    }
+
+    /**
+     * {@inheritDoc}
+     *
+     * Creates media stream.
+     */
+    @Override
+    public void initialize()
+            throws IOException
+    {
+        super.initialize();
+
+        ConfigurationService configurationService
+            = getContent().getConference().getVideobridge()
+                .getConfigurationService();
+
+        if (configurationService == null)
+        {
+            return;
+        }
+
+        // Initialize the RTCP termination strategy from the configuration.
+        String strategyFQN = configurationService.getString(
+            RTCP_TERMINATION_STRATEGY_PNAME, "");
+
+        RTCPTerminationStrategy strategy;
+        if (StringUtils.isNullOrEmpty(strategyFQN))
+        {
+            return;
+        }
+
+        try
+        {
+            Class<?> clazz = Class.forName(strategyFQN);
+            strategy = (RTCPTerminationStrategy) clazz.newInstance();
+        }
+        catch (Exception e)
+        {
+            logger.error(
+                "Failed to configure the video channel RTCP termination strategy",
+                e);
+
+            return;
+        }
+
+        // Initialize the RTCP termination strategy.
+        if (strategy instanceof MediaStreamRTCPTerminationStrategy)
+        {
+            ((MediaStreamRTCPTerminationStrategy) strategy)
+                .initialize(getStream());
+        }
+        else if (strategy
+            instanceof VideoChannelRTCPTerminationStrategy)
+        {
+            ((VideoChannelRTCPTerminationStrategy) strategy)
+                .initialize(this);
+        }
+
+        getStream().setRTCPTerminationStrategy(strategy);
     }
 
     /**
@@ -875,14 +948,6 @@ public class VideoChannel
     public void setAdaptiveLastN(boolean adaptiveLastN)
     {
         this.adaptiveLastN = adaptiveLastN;
-
-        if (adaptiveLastN)
-        {
-            // Ensure that we are using BasicBridgeRTCPTerminationStrategy,
-            // which is currently needed to notify us of incoming REMBs.
-            getContent().setRTCPTerminationStrategyFQN(
-                    BasicBridgeRTCPTerminationStrategy.class.getName());
-        }
     }
 
     /**
@@ -892,14 +957,6 @@ public class VideoChannel
     public void setAdaptiveSimulcast(boolean adaptiveSimulcast)
     {
         this.adaptiveSimulcast = adaptiveSimulcast;
-
-        if (adaptiveSimulcast)
-        {
-            // Ensure that we are using BasicBridgeRTCPTerminationStrategy,
-            // which is currently needed to notify us of incoming REMBs.
-            getContent().setRTCPTerminationStrategyFQN(
-                    BasicBridgeRTCPTerminationStrategy.class.getName());
-        }
     }
 
     /**
@@ -1262,10 +1319,18 @@ public class VideoChannel
                         logger.debug("Retransmitting packet from cache. SSRC "
                                              + ssrc + " seq " + seq);
                     }
-                    getStream().injectPacket(
-                            createPacketForRetransmission(pkt),
-                            true,
-                            true);
+                    try
+                    {
+                        getStream().injectPacket(
+                                createPacketForRetransmission(pkt),
+                                true,
+                                true);
+                    }
+                    catch (TransmissionFailedException e)
+                    {
+                        logger.warn("Failed to inject packet in MediaStream: "
+                            + e);
+                    }
                     iter.remove();
                 }
             }
@@ -1341,7 +1406,15 @@ public class VideoChannel
                                              + " on channel " + c.getID());
                     }
 
-                    c.getStream().injectPacket(pkt, false, true);
+                    try
+                    {
+                        c.getStream().injectPacket(pkt, false, true);
+                    }
+                    catch (TransmissionFailedException e)
+                    {
+                        logger.warn("Failed to inject packet in MediaStream: "
+                            + e);
+                    }
                 }
             }
         }
