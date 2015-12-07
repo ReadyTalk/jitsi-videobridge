@@ -36,7 +36,7 @@ import java.util.concurrent.*;
  * @author George Politis
  */
 public class LoggingHandler
-        implements EventHandler
+    implements EventHandler
 {
     /**
      * The names of the columns of a "conference created" event.
@@ -248,7 +248,7 @@ public class LoggingHandler
      */
     private final Executor executor
         = ExecutorUtils
-            .newCachedThreadPool(true, LoggingHandler.class.getName());
+        .newCachedThreadPool(true, LoggingHandler.class.getName());
 
     /** Javadoc me! */
     private final String databaseName;
@@ -344,10 +344,9 @@ public class LoggingHandler
         if (multipoint)
         {
             for (int i = 0; i < pointCount; i++) {
-                if (!(values[i] instanceof Object[]))
-                    continue;
-
-                pointsArray.add(createPoint(e, columns, (Object[])values[i]));
+                if (values[i] instanceof Object[]) {
+                    pointsArray.add(createPoint(e, columns, (Object[]) values[i]));
+                }
             }
         }
         else {
@@ -384,6 +383,8 @@ public class LoggingHandler
             if (values[i] instanceof Object[]) {
                 logger.warn("value for column \"" + columns[i] + "\" is an unsupported multipoint array, skipping column");
                 continue;
+            } else if(values[i] == null) {
+                fieldsObject.put(columns[i], "null"); //This is to prevent crashing influxdb with null values
             } else {
                 fieldsObject.put(columns[i], values[i]);
             }
@@ -394,8 +395,6 @@ public class LoggingHandler
         if (e.useLocalTime()) { // TODO: We may require a different timestamp format, possibly from a different clock.
             pointObject.put("timestamp", System.currentTimeMillis());
             pointObject.put("precision", "ms"); // specify millisecond precision
-        } else if(values[i] == null) {
-            fieldsObject.put(columns[i], "null"); //This is to prevent crashing influxdb with null values
         } else if(pointTime > 0) {
             pointObject.put("timestamp", pointTime);
         }
@@ -768,10 +767,10 @@ public class LoggingHandler
             Candidate<?> remoteCandidate = pair.getRemoteCandidate();
 
             s.append((localCandidate == null)
-                         ? "unknown" : localCandidate.getTransportAddress())
+                ? "unknown" : localCandidate.getTransportAddress())
                 .append(" -> ")
                 .append((remoteCandidate == null)
-                        ? "unknown" : remoteCandidate.getTransportAddress())
+                    ? "unknown" : remoteCandidate.getTransportAddress())
                 .append("; ");
         }
 
