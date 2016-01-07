@@ -614,20 +614,26 @@ public class VideoChannel
                 // The pinned endpoint is always in the last N set, if
                 // last N > 0.
                 Endpoint pinnedEndpoint = getEffectivePinnedEndpoint();
+                boolean pinned = pinnedEndpoint != null;
+
                 // Keep one empty slot for the pinned endpoint.
-                int nMax = (pinnedEndpoint == null) ? lastN : (lastN - 1);
+                int nMax = (pinned) ? lastN - 1 : lastN;
+
+                if (pinned)
+                    inLastN = channelEndpoint == pinnedEndpoint;
+
                 Endpoint thisEndpoint = getEndpoint();
 
                 for (WeakReference<Endpoint> wr : lastNEndpoints)
                 {
-                    if (n >= nMax)
+                    if (n >= nMax || inLastN)
                         break;
 
                     Endpoint e = wr.get();
 
                     if (e != null)
                     {
-                        if (e.equals(thisEndpoint))
+                        if (e.equals(thisEndpoint) || (pinned && e.equals(pinnedEndpoint)))
                         {
                             continue;
                         }
@@ -640,11 +646,6 @@ public class VideoChannel
 
                     ++n;
                 }
-
-                // FIXME(gp) move this if before the for loop (to avoid an
-                // unnecessary loop)
-                if (!inLastN && pinnedEndpoint != null)
-                    inLastN = channelEndpoint == pinnedEndpoint;
             }
         }
         finally
