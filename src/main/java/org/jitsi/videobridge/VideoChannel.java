@@ -440,6 +440,10 @@ public class VideoChannel
         {
             lastNController.setPinnedEndpointIds((List<String>)ev.getNewValue());
         }
+        else if (Endpoint.LAST_N_PROPERTY_NAME.equals(propertyName))
+        {
+            lastNController.setLastN(((Long)ev.getNewValue()).intValue());
+        }
         else if (Content.CHANNEL_MODIFIED_PROPERTY_NAME.equals(propertyName))
         {
             // Another channel in this content has been modified (
@@ -940,7 +944,7 @@ public class VideoChannel
         this.updateTranslatedVideoChannels();
 
         firePropertyChange(
-            SIMULCAST_MODE_PNAME, oldSimulcastMode, newSimulcastMode);
+                SIMULCAST_MODE_PNAME, oldSimulcastMode, newSimulcastMode);
     }
 
     /**

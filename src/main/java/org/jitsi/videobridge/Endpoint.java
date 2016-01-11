@@ -75,6 +75,13 @@ public class Endpoint
         = Endpoint.class.getName() + ".selectedEndpoint";
 
     /**
+     * The name of the <tt>last-n</tt> property which
+     * specifies the number of <tt>Endpoint</tt>s to be forwarded to this <tt>Endpoint</tt>.
+     */
+    public static final String LAST_N_PROPERTY_NAME
+            = Endpoint.class.getName() + ".lastN";
+
+    /**
      * The {@link Videobridge#COLIBRI_CLASS} value indicating a
      * {@code SelectedEndpointChangedEvent}.
      */
@@ -108,6 +115,13 @@ public class Endpoint
      */
     private static final String COLIBRI_CLASS_ENDPOINT_MESSAGE
         = "EndpointMessage";
+
+    /**
+     * The {@link Videobridge#COLIBRI_CLASS} value indicating a
+     * {@code LastnValueChangedEvent}.
+     */
+    private static final String COLIBRI_CLASS_LAST_N_CHANGED
+            = "LastnValueChangedEvent";
 
     /**
      * The list of <tt>Channel</tt>s associated with this <tt>Endpoint</tt>.
@@ -432,6 +446,7 @@ public class Endpoint
             JSONObject jsonObject,
             Object colibriClass)
     {
+
         if (COLIBRI_CLASS_SELECTED_ENDPOINT_CHANGED.equals(colibriClass))
             onSelectedEndpointChangedEvent(src, jsonObject);
         else if (COLIBRI_CLASS_PINNED_ENDPOINT_CHANGED.equals(colibriClass))
@@ -442,6 +457,9 @@ public class Endpoint
             onClientHello(src, jsonObject);
         else if (COLIBRI_CLASS_ENDPOINT_MESSAGE.equals(colibriClass))
             onClientEndpointMessage(src, jsonObject);
+        else if (COLIBRI_CLASS_LAST_N_CHANGED.equals(colibriClass))
+            onClientLastNChangedEvent(src, jsonObject);
+
     }
 
     /**
@@ -511,6 +529,39 @@ public class Endpoint
                     + " to send EndpointMessage");
             }
         }
+    }
+
+    /**
+     * Notifies this {@code Endpoint} that a {@code LastNChangedEvent}
+     * has been received by the associated {@code SctpConnection}.
+     *
+     * @param src the {@code WebRtcDataStream} by which {@code jsonObject} has
+     * been received
+     * @param jsonObject the JSON object with {@link Videobridge#COLIBRI_CLASS}
+     * {@code LastNChangedEvent} which has been received by the
+     * associated {@code SctpConnection}
+     */
+    private void onClientLastNChangedEvent(
+            WebRtcDataStream src,
+            JSONObject jsonObject)
+    {
+
+        // Find the new last N value.
+        long newLastN = (Long) jsonObject.get("lastnValue");
+
+        if (logger.isDebugEnabled())
+        {
+            StringCompiler sc = new StringCompiler();
+            sc.bind("New last-N", newLastN);
+            sc.bind("this", this);
+            logger.debug(sc.c(
+                    "Endpoint {this.id} notified us that it has chosen a new last-N of: "
+                            + " {newLastN}."));
+        }
+
+        firePropertyChange(LAST_N_PROPERTY_NAME,
+                null, newLastN);
+
     }
 
     /**
